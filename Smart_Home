@@ -1,0 +1,175 @@
+
+
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include "Talkie.h"
+#include "Vocab_US_Large.h"
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+
+#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+
+/*Night Light
+ * Put the photoresitior in series with a 2.2k resitor with the resistor connected to ground and the photoresitor connected to 5V
+ * Attach a wire from A1 on the Arduino inbetween the resistor and photoresistor
+ * Connect a 270 resistor in series with an LED
+ * Attach the LED to ground and the resistor to digital out 6 on the Arduino
+ * 
+ * Appliances
+ * Connect a 270 resistor in series with an LED
+ * Attach the LED to ground and the resistor to digital out 7 for the humidifier and digital out 4 for the AC
+ * 
+ * Temperature Sensor 
+ * Put the sensor in series with a 10k resistor
+ * 5V connected to thermistor and ground connected to resistor
+ * Attach a wire to analog in pin 0 and connect the other end in-between the resistor and thermistor
+ * 
+ * Distance Sensor
+ * Connect Vcc to 5V, Trig to pin 3, Echo to pin 2, and GND to ground
+ * For the sensor to work, the trigger pin needs a 10 us pulse to start
+ * An 8 cycle burst at 40 kHz is then sent from the sensor
+ * The echo pin then listens for the return of the signal
+ * 
+ * LCD Display
+ * Connect VCC to 5V , GND to ground, SCL to A5, and SDA to A4
+ */
+
+ Talkie voice;
+ 
+int ThermistorPin = 0; //Create variable for pin that will be used to measure the voltage inbetween the thermistor and the resistor
+int Vo; //Variable to hold value read from the analog in
+float R2 = 10000; //Value of resistor
+float logR1, R1, T; //Variables to be defined later
+float c1 = 1.191883375e-03, c2 = 2.246315931e-04, c3 = 1.192853594e-07; //Steinhart-Hart coeffiecients
+
+int echoPin = 2; //pin to plug the echo into
+int trigPin = 3; //pin to plug the trig into
+unsigned long duration; 
+float distanceCM; 
+float distanceIN;
+int ACPin = 4;
+int HumPin = 7;
+char val;
+int light = 0; // store the current light value
+int nightLightPin = 6;
+
+void setup() {
+Serial.begin(9600); //Sets data rate in bits per second for serial data transmission to 9600
+pinMode(trigPin, OUTPUT); //sets trigPin as an output pin
+pinMode(echoPin, INPUT);  //sets echoPin as an input pin
+pinMode(ACPin,OUTPUT);
+pinMode(HumPin,OUTPUT); 
+pinMode(nightLightPin,OUTPUT);
+pinMode(5, OUTPUT);
+digitalWrite(5, HIGH); 
+
+ // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;); // Don't proceed, loop forever
+  }
+
+  // Show initial display buffer contents on the screen --
+  // the library initializes this with an Adafruit splash screen.
+  display.display();
+  delay(2000); // Pause for 2 seconds
+
+  // Clear the buffer
+  display.clearDisplay();
+}
+
+void loop() {
+  
+//Night Light
+light = analogRead(A1);// read and save value from Photocell
+if(light < 11)// 5 lux
+    {
+        digitalWrite(nightLightPin,HIGH); // Turn LED on
+        
+    }else{
+      digitalWrite(nightLightPin,LOW);
+    }
+
+  
+//Appliances
+//Values A,B,C, and D are sent from the GUI to indicate what to turn on and off
+   if( Serial.available() ) // if data is available to read
+   {
+      val = Serial.read(); // read it and store it in 'val'
+   }
+   if( val == 'A' ) // if 'A' was received
+   {
+      digitalWrite(ACPin, HIGH); // turn ON the LED
+   }if( val == 'B' ) // if 'B' was received
+   {
+      digitalWrite(ACPin, LOW); // turn OFF the LED
+   }
+   if( val == 'C' ) // if 'C' was received
+   {
+      digitalWrite(HumPin, HIGH); // turn ON the LED
+   }if( val == 'D' ) // if 'D' was received
+   {
+      digitalWrite(HumPin, LOW); // turn OFF the LED
+   }
+
+//Humidity Sensor
+
+
+//Thermistor
+  Vo = analogRead(ThermistorPin); //Arduino will read the voltage at this point on a scale of 0(0V) to 1023(5V)
+  R1 = R2 * (1023.0 / (float)Vo - 1.0); //Voltage divider formula, finds the resistance of the thermistor
+  logR1 = log(R1); //Finds the nataural log of R2 to be used in Steinhart-hart equation
+  T = (1.0 / (c1 + c2*logR1 + c3*logR1*logR1*logR1)); //Steinhart-Hart equation
+  T = T - 273.15; //convert kelvins to celcius
+  T = (T * 9.0)/ 5.0 + 32.0; //convert celcius to fahrenheit
+
+  Serial.print("Temperature: "); //prints out Temperature: to serial
+  Serial.print(T); //prints out calculated temperature(T) in fahrenheit to serial
+  if(distanceIN < 36){ //If the distance sensor detects something closer than 3 feet, a message is sent to the GUI
+  Serial.print(" FI");
+  }else{
+  Serial.print(" F"); //prints out  F to serial
+  }
+  if (T>80){ // If the temperature is above 80 F, then the AC will automatically turn on
+     digitalWrite(ACPin, HIGH);
+  }
+
+//Distance Sensor
+  //The trigger pin needs to have a 10 us pulse applied to it to start the sensor
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  
+  digitalWrite(trigPin, LOW); //Turns off the pulse
+  duration = pulseIn(echoPin, HIGH); //Resords the time it takes in us for echoPin to go from low to high
+  distanceCM = duration * 0.0343 / 2; //Takes the time it took for the signal to return and multiplies it by the speed of sound in cm/us over 2
+  //the division by 2 is because the sound has to go the distsnace to the object and then come back
+  distanceIN = distanceCM*0.393701; //converts cm to in
+  
+  
+//LCD Display
+  display.clearDisplay();
+  display.setTextSize(1);      // Normal 1:1 pixel scale
+  display.setTextColor(SSD1306_WHITE); // Draw white text
+  display.setCursor(0, 0);     // Start at top-left corner
+  display.print("Temperature: "); //prints out Temperature: to display
+  display.print(T); //prints out calculated temperature(T) in fahrenheit to display
+  display.println(" F"); //prints out  F to display
+
+  display.display();
+  delay(100);
+
+//Speaker
+if(distanceIN < 36){
+  voice.say(sp2_INTRUDER);
+  voice.say(sp2_ALERT);
+  voice.say(sp2_INTRUDER);
+  voice.say(sp2_ALERT);
+}
+
+
+}
