@@ -1,0 +1,219 @@
+#include <Adafruit_SSD1306.h>
+#include <splash.h>
+
+#include <Adafruit_SSD1306.h>
+
+#include <digitalWriteFast.h>
+#include <Talkie.h>
+#include <TalkieLPC.h>
+#include <TalkieUtils.h>
+#include <Vocab_Soundbites.h>
+#include <Vocab_Special.h>
+#include <Vocab_Toms_Diner.h>
+#include <Vocab_US_Acorn.h>
+#include <Vocab_US_Clock.h>
+#include <Vocab_US_Large.h>
+#include <Vocab_US_TI99.h>
+
+#include <Adafruit_SSD1306.h>
+
+#include <Adafruit_BusIO_Register.h>
+#include <Adafruit_I2CDevice.h>
+#include <Adafruit_I2CRegister.h>
+#include <Adafruit_SPIDevice.h>
+
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+
+#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+Talkie voice;
+
+int HumidityPin = 3; //Create variable for pin that will be used to measure the voltage inbetween the Humidity and the resistor
+int Vo; //Variable to hold value read from the analog in
+float R1 = 41000; //resistnace of biasing resistor
+float R2, H; //Variables to be defined later
+float a = .55, b = -149, c = 15024, d = -663290, e = 10853869; //Calculated Coefficients to relate impedence to humidity
+float I = 24*10^-6;
+float Ci = 253;
+
+
+int ThermistorPin = 1; //Create variable for pin that will be used to measure the voltage inbetween the thermistor and the resistor
+int Vo2; //Variable to hold value read from the analog in
+float TR2 = 10000; //Value of resistor
+float logR1, TR1, T; //Variables to be defined later
+float c1 = 1.191883375e-03, c2 = 2.246315931e-04, c3 = 1.192853594e-07; //Steinhart-Hart coeffiecients
+
+int echoPin = 2; //pin to plug the echo into
+int trigPin = 3; //pin to plug the trig into
+unsigned long duration; 
+float distanceCM; 
+float distanceIN;
+int ACPin = 4;
+int HumPin = 7;
+int Vh;
+char val;
+int light = 0; // store the current light value
+int nightLightPin = 0;
+int t;
+int actime;
+
+void setup()
+{
+  Serial.begin(9600); //Sets data rate in bits per second for serial data transmission to 9600
+  pinMode(10, OUTPUT); //PWM for humidity sensor
+  pinMode(trigPin, OUTPUT); //sets trigPin as an output pin
+  pinMode(echoPin, INPUT);  //sets echoPin as an input pin //for motion sensor
+  pinMode(7, OUTPUT); // configure digital pin 13 as an output
+  pinMode(6, OUTPUT); // configure digital pin 12 as an output
+
+// SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;); // Don't proceed, loop forever
+  }
+
+  // Show initial display buffer contents on the screen --
+  // the library initializes this with an Adafruit splash screen.
+  display.display();
+  delay(2000); // Pause for 2 seconds
+
+  // Clear the buffer
+  display.clearDisplay();
+
+  
+}
+
+void loop()
+{
+
+  display.clearDisplay();
+
+  display.setTextSize(1);      // Normal 1:1 pixel scale
+  display.setTextColor(SSD1306_WHITE); // Draw white text
+  display.setCursor(0, 0);     // Start at top-left corner
+  display.print("Temperature: "); //prints out Temperature: to display
+  display.print(T); //prints out calculated temperature(T) in fahrenheit to display
+  display.println(" F"); //prints out  F to display
+  display.print("Humidity: "); //prints out Humidity: to display
+  display.print(H); //prints out calculated Humidity to display
+  display.println(" %"); //prints out  % to display
+
+  display.display(); //needs to be called to display the text
+
+  //These four lines of code are creating a PWM wave with a duty cycle of 1KHz
+  //This is done be turning on and off a Digital output pin. This outputs 5V and turns
+  //off to 0V
+  // Approximately 50% duty cycle @ 1KHz
+  digitalWrite(10, HIGH); //Turns on digital output pin
+  delayMicroseconds(500); //turns on for 500microseconds
+  digitalWrite(10, LOW); //turns off digital output pin
+  delayMicroseconds(500); //turns off for 500microseconds
+
+    Vh = analogRead(HumidityPin); //Arduino will read the voltage at this point on a scale of 0(0V) to 1023(5V)
+    t = millis();//turns on timer in milliseconds
+    actime = sin(1000*t)+200; //a sine wave for reference for when to read data
+    analogWrite(HumidityPin, actime);//analogwrites humidity pin with the reference sin wave to read data
+  
+    R2 = sqrt((pow(((1023.0 / (float)Vh)/I), 2) - Ci)) - R1;//equation relating voltage and resistance
+    H = a*pow(R2, 4) + b*pow(R2, 3) + c*pow(R2, 2) + d*R2 + e; //equation relating H and resistance
+
+ 
+
+
+  //Thermistor
+  Vo2 = analogRead(ThermistorPin); //Arduino will read the voltage at this point on a scale of 0(0V) to 1023(5V)
+  TR1 = TR2 * (1023.0 / (float)Vo2 - 1.0); //Voltage divider formula, finds the resistance of the thermistor
+  logR1 = log(TR1); //Finds the nataural log of R2 to be used in Steinhart-hart equation
+  T = (1.0 / (c1 + c2*logR1 + c3*logR1*logR1*logR1)); //Steinhart-Hart equation
+  T = T - 273.15; //convert kelvins to celcius
+  T = (T * 9.0)/ 5.0 + 32.0; //convert celcius to fahrenheit
+
+  light = analogRead(A0); // read and save value from Photocell
+  
+
+
+  Serial.print("Humidity:   "); //prints out Humidity: to serial
+  Serial.print(H); //prints out calculated Humidity to serial
+  Serial.print(" %"); //prints out % to serial
+  Serial.print(" \n");
+ // Serial.print("Light Value: "); //prints out Temperature: to serial
+//  Serial.println(light); // prints the voltage after photocell
+      if(light > 500) //32000+ lux
+    { 
+       // Serial.println("Bright"); //prints threshold value on screen
+        digitalWrite(6,LOW); //turn red LED off
+        digitalWrite(7,LOW); // turn yellow LED off
+        
+    }
+    else if(light > 50 && light < 300) // Dim light: 5-32000 lux
+    { 
+      // Serial.println("Dim Light!"); //50-32000 lux
+       digitalWrite(6, HIGH); // turn red LED on
+       digitalWrite(7,LOW);  // turn yellow LED off
+    }
+    else if(light < 50)// 5 lux
+    {
+       // Serial.println("Dark Room"); //Dark room under 5 lux
+        digitalWrite(6,HIGH); // Turn red LED on
+        digitalWrite(7,HIGH); // Turn yellow LED on
+    }
+  Serial.print("Temperature: "); //prints out Temperature: to serial
+  Serial.print(T); //prints out calculated temperature(T) in fahrenheit to serial
+  if(distanceIN < 36){ //If the distance sensor detects something closer than 3 feet, a message is sent to the GUI
+  Serial.print(" FI");
+  }else{
+  Serial.print(" F"); //prints out  F to serial
+  }
+  //Serial.print("\n "); //prints out Temperature: to serial
+ // Serial.print("Distance: "); //prints out Temperature: to serial
+ // Serial.print(distanceIN); //prints out calculated temperature(T) in fahrenheit to serial
+
+
+
+  
+  //if(distanceIN < 36){ //If the distance sensor detects something closer than 3 feet, a message is sent to the GUI
+ // Serial.print(" Intruder ");
+ // Serial.print("\n "); //prints out Temperature: to serial
+ //   Serial.print("\n "); //prints out Temperature: to serial
+//  }else{
+ // Serial.print(" No Intruder "); //prints out  F to serial
+ // Serial.print("\n "); //prints out Temperature: to serial
+ // Serial.print("\n "); //prints out Temperature: to serial
+ // }
+  if (T>80){ // If the temperature is above 80 F, then the AC will automatically turn on
+     digitalWrite(ACPin, HIGH);
+  }
+
+//Distance Sensor
+  //The trigger pin needs to have a 10 us pulse applied to it to start the sensor
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  
+  digitalWrite(trigPin, LOW); //Turns off the pulse
+  duration = pulseIn(echoPin, HIGH); //Resords the time it takes in us for echoPin to go from low to high
+  distanceCM = duration * 0.0343 / 2; //Takes the time it took for the signal to return and multiplies it by the speed of sound in cm/us over 2
+  //the division by 2 is because the sound has to go the distsnace to the object and then come back
+  distanceIN = distanceCM*0.393701; //converts cm to in
+
+    //Speaker
+if(distanceIN < 36){
+  voice.say(sp2_INTRUDER);
+  voice.say(sp2_ALERT);
+  voice.say(sp2_INTRUDER);
+  voice.say(sp2_ALERT);
+  
+}
+
+
+  delay(500); //delay .5 seconds before loop starts again
+}
